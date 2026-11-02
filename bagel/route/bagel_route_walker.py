@@ -311,14 +311,6 @@ LOOKAHEAD_TIGHT: float = 12.0
 
 前视越长轨迹越平但横向收敛越慢；贴墙段容差只剩 1~2px，必须把前视收短才跟得住。"""
 
-LOOKAHEAD_CORNER_DEG: float = 20.0
-"""前视点不再越过的折角阈值（度）。
-
-纯追踪的瞄准点是「沿折线前进一个前视距离」的点，折角处这根弦会从内角切过去，
-切掉的深度约 `前视 × sin(θ/2)`（22px 前视 + 92° 折角 ≈ 15px，实测折角段横向偏
-9~11px 就是它）。所以遇到超过这个阈值的折点就把瞄准点收到折点上，缓弯才允许越过。
-"""
-
 TIGHT_CLEARANCE: float = 4.0
 """离墙这么近算窄处（px）：不冲刺 + 短前视。实测走廊到墙距离中位 8.4px，最窄 3px。"""
 
@@ -498,23 +490,6 @@ def _closest_on_segment(
     t = ((position[0] - start.x) * dx + (position[1] - start.y) * dy) / length_sq
     t = max(0.0, min(1.0, t))
     return (start.x + t * dx, start.y + t * dy)
-
-
-def _turn_angle_at(path: list[tuple[float, float]], index: int) -> float:
-    """折线在第 index 个顶点处的转折角（度，0 表示直线通过）。"""
-    if not 0 < index < len(path) - 1:
-        return 0.0
-    ax, ay = path[index - 1]
-    bx, by = path[index]
-    cx, cy = path[index + 1]
-    first = (bx - ax, by - ay)
-    second = (cx - bx, cy - by)
-    first_len = hypot(*first)
-    second_len = hypot(*second)
-    if first_len <= 0 or second_len <= 0:
-        return 0.0
-    cosine = (first[0] * second[0] + first[1] * second[1]) / (first_len * second_len)
-    return degrees(acos(max(-1.0, min(1.0, cosine))))
 
 
 def _robust_spread(samples: list[float]) -> float:
@@ -2630,9 +2605,6 @@ class BagelRouteWalker(BagelOperation):
             remain -= left
             index += 1
             ratio = 0.0
-            # 折点不越过：越过去瞄准点就成了一根弦，从内角切掉一块。
-            if index < len(path) - 1 and _turn_angle_at(path, index) > LOOKAHEAD_CORNER_DEG:
-                return path[index]
         return path[-1]
     def _check_stuck(
         self, position: tuple[float, float], point: BagelRoutePoint, angle: float,
