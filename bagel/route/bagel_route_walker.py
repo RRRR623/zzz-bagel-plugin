@@ -2717,6 +2717,11 @@ class BagelRouteWalker(BagelOperation):
         side = self._path_side(position, point, angle)
         if side is None:
             side = 1 if self.retreats % 2 else -1
+        elif self.retreats % 2 == 0:
+            # 第二次还卡在同一处：换另一边退，别把同一条路再走一遍。
+            # 侧别是按「我在路径线哪一侧」算的，同一个卡点每次算出来都一样，
+            # 实测第 2 点连续 5 次都往左，退完回来照样卡。
+            side = -side
         self.input_worker.retreat_step(side, RETREAT_BACK_SECONDS, RETREAT_SIDE_SECONDS)
         self._record_input()
         log.info(
