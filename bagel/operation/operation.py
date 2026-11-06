@@ -16,6 +16,7 @@ from zzz_od.operation.zzz_operation import ZOperation
 
 from .. import screenshot
 from ..route.input_worker import release_all_keys
+from ..screens import ensure_screens
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
@@ -143,6 +144,11 @@ class BagelOperation(ZOperation):
     STATUS_CLEANUP_FAILED: str = '贝果收尾失败'
     STATUS_ROUND_FAILED: str = '贝果局内流程失败'
     STATUS_CONTAINER_FAILED: str = '贝果容器靠近或开箱恢复失败'
+
+    def handle_init(self) -> None:
+        """每个子操作开始前确认插件画面还在；被其他插件的重载冲掉时补回来。"""
+        super().handle_init()
+        ensure_screens(self.ctx.screen_loader)
 
     def _execute_one_round(self) -> OperationRoundResult:
         """程序异常不在局内继续重试输入。"""
