@@ -13,6 +13,11 @@ from .defs import (
     CLEAN_QUALITIES,
     CLEAN_TYPES,
     DEFAULT_CLEAN_FILTER_GROUPS,
+    DEFAULT_DIFFICULTY,
+    DIFFICULTIES,
+    DIFFICULTY_HARD,
+    DIFFICULTY_HAZARD,
+    DIFFICULTY_NORMAL,
 )
 
 
@@ -32,6 +37,21 @@ class BagelConfig(ApplicationConfig):
         super().__init__(APP_ID, instance_idx, group_id)
 
     @property
+    def difficulty(self) -> str:
+        """挑战难度：高危、困难、常规；默认高危。"""
+        value = self.get('difficulty', DEFAULT_DIFFICULTY)
+        if value not in DIFFICULTIES:
+            return DEFAULT_DIFFICULTY
+        return value
+
+    @difficulty.setter
+    def difficulty(self, value: str) -> None:
+        """保存挑战难度。"""
+        if value not in DIFFICULTIES:
+            raise ValueError(f'difficulty 只能是 {"、".join(DIFFICULTIES)}')
+        self.update('difficulty', value)
+
+    @property
     def max_success_rounds(self) -> int:
         """成功入仓多少局后结束；0 不限制成功次数。"""
         return self.get('max_success_rounds', 1)
@@ -44,16 +64,16 @@ class BagelConfig(ApplicationConfig):
         self.update('max_success_rounds', value)
 
     @property
-    def max_failure_retries(self) -> int:
-        """本次任务因失败最多额外入场多少次；成功不清零。"""
-        return self.get('max_failure_retries', 5)
+    def max_consecutive_failures(self) -> int:
+        """全局或同一路线连续失败达到多少局时停止；成功入仓后清零。"""
+        return self.get('max_consecutive_failures', 5)
 
-    @max_failure_retries.setter
-    def max_failure_retries(self, value: int) -> None:
-        """保存累计失败重试上限，0 表示失败后只结算。"""
-        if type(value) is not int or not 0 <= value <= 100:
-            raise ValueError('max_failure_retries 必须是 0 至 100 的整数')
-        self.update('max_failure_retries', value)
+    @max_consecutive_failures.setter
+    def max_consecutive_failures(self, value: int) -> None:
+        """保存连续失败上限，1 表示首次失败结算后停止。"""
+        if type(value) is not int or not 1 <= value <= 10:
+            raise ValueError('max_consecutive_failures 必须是 1 至 10 的整数')
+        self.update('max_consecutive_failures', value)
 
     @property
     def blueprint_priority(self) -> bool:
@@ -194,15 +214,17 @@ class BagelConfig(ApplicationConfig):
 
     def validate(self) -> None:
         """启动前校验配置。"""
+        if self.difficulty not in DIFFICULTIES:
+            raise ValueError(f'difficulty 只能是 {"、".join(DIFFICULTIES)}')
         interval = self.sell_interval
         if type(interval) is not int or not 1 <= interval <= 999:
             raise ValueError('sell_interval 必须是 1 至 999 的整数')
         value = self.max_success_rounds
         if type(value) is not int or not 0 <= value <= 1000:
             raise ValueError('max_success_rounds 必须是 0 至 1000 的整数')
-        retries = self.max_failure_retries
-        if type(retries) is not int or not 0 <= retries <= 100:
-            raise ValueError('max_failure_retries 必须是 0 至 100 的整数')
+        failures = self.max_consecutive_failures
+        if type(failures) is not int or not 1 <= failures <= 10:
+            raise ValueError('max_consecutive_failures 必须是 1 至 10 的整数')
         if type(self.blueprint_priority) is not bool:
             raise ValueError('blueprint_priority 必须是布尔值')
         if type(self.auto_clean_warehouse) is not bool:
@@ -223,6 +245,14 @@ class BagelConfig(ApplicationConfig):
             and (not steps or any(not step.types or not step.qualities for step in steps))
         ):
             raise ValueError('自定义清理每一步都要同时选择类型和品质')
+
+
+class BagelDifficulty(Enum):
+    """挑战难度。"""
+
+    HAZARD = ConfigItem('高危', DIFFICULTY_HAZARD)
+    HARD = ConfigItem('困难', DIFFICULTY_HARD)
+    NORMAL = ConfigItem('常规', DIFFICULTY_NORMAL)
 
 
 class BagelCleanMode(Enum):

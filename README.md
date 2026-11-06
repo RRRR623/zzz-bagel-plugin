@@ -16,10 +16,13 @@
 ![设置界面](bagel/assets/docs/03-settings.png)
 
 - **累计成功次数**：达到这个次数就结束任务。填 0 表示一直循环，直到仓库满。
-- **累计失败次数**：失败后自动重开的次数，超过就停止并留下现场。
+- **连续失败次数**：默认 5，范围 1–10。全局或同一条路线连续失败达到这个次数，程序完成结算后停止并留下现场；填 1 表示首次失败结算后停止。成功入仓后，全局和本局路线的连续失败清零，其他路线的计数保留。空箱局和非支持出生点不改变计数。
+- **挑战难度**：可选常规、困难、高危，默认高危。选困难或常规时，请在路线编辑器里改开「录像店-非高危」和「白鸽工地站-非高危」，并关闭其他出生点；程序不会自动切换路线。高危路线在这两个难度下可能卡在助战物资上，天赋未满时卸装后的血量也可能跑不完较长路线。
 - **蓝图优先**：打开后局内优先拾取蓝图。
 - **自动出售**：每累计入仓若干次后自动卖一次。注意「已有库存也会出售」——安全箱里符合出售条件的物品同样会被卖掉。
 - **出售范围**：按顺序执行，每一步要同时满足物品类型和品质。默认两步：先「贵重物品 + 战术棱镜」的 C/B/A/S，再「其他」的 C/B/A。想自己定就切到「自定义」。
+
+升级后，旧的累计失败重试设置不再读取，连续失败上限默认使用 5，可在设置页重新调整。
 
 ## 路线
 
@@ -89,12 +92,12 @@ PR 里请写清楚：用的出生点、走法要点（为什么这么绕）、�
 | --- | --- |
 | 默认路线（只读，随插件分发） | `plugins/bagel/bagel/assets/game_data/bagel/routes/` |
 | 出生点清单 | `plugins/bagel/bagel/assets/game_data/bagel/spawn_points.yml` |
-| 你复制的自定义路线 | 工作目录 `plugin_data/zzz-bagel-plugin/bagel/routes/custom_*.route.json` |
-| 每个出生点当前开启的路线 | 工作目录 `plugin_data/zzz-bagel-plugin/bagel/route_settings.yml` |
-| 路线数据记录 | 工作目录 `plugin_data/zzz-bagel-plugin/bagel/route_records.jsonl` |
-| 失败现场截图 | 工作目录 `plugin_data/zzz-bagel-plugin/bagel/screenshots/` |
+| 你复制的自定义路线 | 工作目录 `plugin_data/bagel/routes/custom_*.route.json` |
+| 每个出生点当前开启的路线 | 工作目录 `plugin_data/bagel/route_settings.yml` |
+| 路线数据记录（保留 7 天） | 工作目录 `plugin_data/bagel/route_records.jsonl` |
+| 失败现场截图（保留 3 天，总量不超过 500 MB） | 工作目录 `plugin_data/bagel/screenshots/` |
 
-运行期数据都放在工作目录的 `plugin_data/zzz-bagel-plugin/bagel/` 下，跟插件目录分开：插件升级会整个替换插件目录，数据放在里面会被一起删掉，放在外面就不会。默认路线在插件里，随插件分发，只读。
+运行期数据都放在工作目录的 `plugin_data/bagel/` 下，跟插件目录分开：插件升级会整个替换插件目录，数据放在里面会被一起删掉，放在外面就不会。默认路线在插件里，随插件分发，只读。
 
 ## 常见问题
 
@@ -105,7 +108,7 @@ PR 里请写清楚：用的出生点、走法要点（为什么这么绕）、�
 它是只读的。点「复制」，在副本上改。
 
 **换了工作目录，自定义路线不见了**
-自定义路线存在工作目录的 `plugin_data/zzz-bagel-plugin/bagel/routes/` 下，换目录前先把整个 `plugin_data/zzz-bagel-plugin/bagel/` 拷过去。
+自定义路线存在工作目录的 `plugin_data/bagel/routes/` 下，换目录前先把整个 `plugin_data/bagel/` 拷过去。
 
 **跑起来总是卡在墙角**
 这是路线偏保守之外的另一种情况：你的角色移速比录路线时快。把长直路段的途径点拉远一点，或者在拐角前多打一个点。

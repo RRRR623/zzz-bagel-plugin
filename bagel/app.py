@@ -75,7 +75,10 @@ class BagelApp(ZApplication):
         self.rounds_since_sell: int = 0
         self.empty_rounds: int = 0
         self.defeat_rounds: int = 0
-        self.failure_retries_used: int = 0
+        self.consecutive_failures: int = 0
+        """全局连续失败局数；任一局成功入仓后清零。"""
+        self.route_failures: dict[str, int] = {}
+        """各路线的连续失败局数，键为路线引用；只有该路线成功入仓才清零。"""
         self.failure_retry_pending: bool = False
         self.failure_reason: str | None = None
         self.failure_history: list[dict[str, object]] = []
@@ -105,8 +108,9 @@ class BagelApp(ZApplication):
                 result = super().execute()
                 if self.run_record is not None:
                     self.run_record.update('retry_summary', {
-                        'used': self.failure_retries_used,
-                        'limit': self.config.max_failure_retries,
+                        'consecutive_failures': self.consecutive_failures,
+                        'route_failures': self.route_failures,
+                        'limit': self.config.max_consecutive_failures,
                         'failures': self.failure_history,
                         'success_rounds': self.success_rounds,
                         'stop_reason': result.status,
@@ -114,9 +118,9 @@ class BagelApp(ZApplication):
                     })
                 log.info(
                     '贝果任务结束：%s；入场=%s，成功=%s，失败结算=%s，连续空箱=%s；'
-                    '整体重试=%s/%s；最近正常结算返回=%s；耗时=%.1f秒',
+                    '连续失败=%s/%s；最近正常结算返回=%s；耗时=%.1f秒',
                     result.status, self.attempts, self.success_rounds, self.defeat_rounds,
-                    self.empty_rounds, self.failure_retries_used, self.config.max_failure_retries,
+                    self.empty_rounds, self.consecutive_failures, self.config.max_consecutive_failures,
                     self.last_return_status or '未记录', self.operation_usage_time,
                 )
                 return result
@@ -251,7 +255,8 @@ class BagelApp(ZApplication):
         self.rounds_since_sell = 0
         self.empty_rounds = 0
         self.defeat_rounds = 0
-        self.failure_retries_used = 0
+        self.consecutive_failures = 0
+        self.route_failures = {}
         self.failure_retry_pending = False
         self.failure_reason = None
         self.failure_history = []
@@ -266,12 +271,40 @@ class BagelApp(ZApplication):
         self._route_rounds = 0
         self._route_reported = False
         self._route_recorder.prune()
+        screenshot.prune_screenshots()
 
     def _reset_round_route(self) -> None:
         """新的一局开始前清空地图、出生点和路线。"""
         self._round_map_id = None
         self._round_spawn = None
         self._round_route = None
+
+    def _count_round_failure(self) -> None:
+        """失败局计入全局连续失败；已执行路线时同时计入该路线。"""
+        self.consecutive_failures += 1
+        if self._round_route is not None:
+            key = str(self._round_route.ref)
+            self.route_failures[key] = self.route_failures.get(key, 0) + 1
+
+    def _clear_round_failures(self) -> None:
+        """成功入仓清零全局计数和本局路线的计数；其他路线的计数保留。"""
+        self.consecutive_failures = 0
+        if self._round_route is not None:
+            self.route_failures.pop(str(self._round_route.ref), None)
+
+    def _round_route_failures(self) -> int:
+        """本局路线的连续失败局数；本局没跑路线时为 0。"""
+        if self._round_route is None:
+            return 0
+        return self.route_failures.get(str(self._round_route.ref), 0)
+
+    def _failure_progress(self) -> str:
+        """连续失败进度的日志文本；本局跑了路线时带上该路线的计数。"""
+        limit = self.config.max_consecutive_failures
+        progress = f'连续失败 {self.consecutive_failures}/{limit}'
+        if self._round_route is not None:
+            progress += f'，路线「{self._round_route.name}」连续失败 {self._round_route_failures()}/{limit}'
+        return progress
 
     def _record_round_income(self, read_hud: bool) -> None:
         """把本局调查收益和带出物品记入统计；只写统计，出错不影响流程。
@@ -340,9 +373,7 @@ class BagelApp(ZApplication):
         retrying_failure = self.failure_retry_pending
         if retrying_failure:
             self.failure_retry_pending = False
-            self.failure_retries_used += 1
-            log.warning('贝果失败重开：%s；整体重试已用 %s/%s',
-                        self.failure_reason, self.failure_retries_used, self.config.max_failure_retries)
+            log.warning('贝果失败重开：%s；%s', self.failure_reason, self._failure_progress())
         # 入场前先把按键全松一次：上一局无论是正常收尾、异常中断还是人工停止，
         # 残留的方向键都会让角色在这一局一开始就自己往一侧跑。
         try:
@@ -359,6 +390,7 @@ class BagelApp(ZApplication):
             prepare_shortcut_entry=allow_clear_loadout,
             recovery_auto_clean=self.config.auto_clean_warehouse,
             recovery_filter_groups=self.config.clean_filter_groups(),
+            difficulty=self.config.difficulty,
         ).execute()
         if retrying_failure and not result.success:
             return self._finish_failed_round(result, '额外入场')
@@ -394,14 +426,14 @@ class BagelApp(ZApplication):
         """出生点没有可执行路线：空跑退出，失败时留图。
 
         路线执行器识别到的出生点不在已登记范围内，或该出生点没有开启路线时也走这里，
-        退出去重开，不计成功、不消耗整体重试次数。
+        退出去重开，不计成功，也不计入连续失败。
         """
         self._stats.set_outcome(stats.OUTCOME_UNSUPPORTED)
         self._stats.set_income(0)
         return self.round_by_op_result(BagelExit(self.ctx).execute())
 
     @node_from(from_name='退出非支持局')
-    @node_from(from_name='判断整体重试次数', status='继续入场')
+    @node_from(from_name='判断连续失败次数', status='继续入场')
     @operation_node(name='返回入口', screenshot_before_round=False)
     def return_entry(self) -> OperationRoundResult:
         """返回贝果主界面后开下一局；大世界落点由入场操作重建入口。"""
@@ -441,7 +473,7 @@ class BagelApp(ZApplication):
             # 不是整体失败；走非支持出生点那条退出重开的路。
             return self.round_success(self.STATUS_ANCHOR_SKIP)
         if not outcome.success and outcome.status == BagelRouteWalker.STATUS_SPAWN_FAILED:
-            # 出生点识别没有稳定结论：按失败局退出，消耗一次整体重试。
+            # 出生点识别没有稳定结论：按失败局退出，计入连续失败。
             reason = f'{outcome.status}：{outcome.data}' if outcome.data else outcome.status
             return self.round_fail(BagelOperation.STATUS_ROUND_FAILED, data=reason)
         if not outcome.success and outcome.status == BagelRouteWalker.STATUS_CONFIG_INVALID:
@@ -477,6 +509,7 @@ class BagelApp(ZApplication):
             if result.status == BagelDeposit.STATUS_DONE:
                 self.success_rounds += 1
                 self.empty_rounds = 0
+                self._clear_round_failures()
                 self._stats.set_outcome(stats.OUTCOME_SUCCESS)
             elif result.status == BagelDeposit.STATUS_EMPTY:
                 self.empty_rounds += 1
@@ -546,16 +579,19 @@ class BagelApp(ZApplication):
             else previous.status if previous is not None else '局内失败'
         )
         release_flow_inputs(self.ctx)
+        self._count_round_failure()
         self._stats.set_outcome(stats.OUTCOME_FAILED)
         self._record_round_income(read_hud=False)
         path = screenshot.save_screenshot(self.last_screenshot, 'BagelApp')
         self.failure_history.append({
             'reason': self.failure_reason,
             'screenshot': str(path) if path is not None else '',
-            'used': self.failure_retries_used,
+            'consecutive_failures': self.consecutive_failures,
+            'route': str(self._round_route.ref) if self._round_route is not None else None,
+            'route_failures': self._round_route_failures(),
         })
-        log.error('本局失败：%s。程序正在退出并处理仓库结算。本局不计成功。整体重试次数已用 %s/%s。',
-                  self.failure_reason, self.failure_retries_used, self.config.max_failure_retries)
+        log.error('本局失败：%s。程序正在退出并处理仓库结算。本局不计成功。%s。',
+                  self.failure_reason, self._failure_progress())
         usage.log_screenshot(path)
         return self._finish_failed_round(BagelExit(self.ctx).execute(), '退出')
 
@@ -585,13 +621,19 @@ class BagelApp(ZApplication):
         return self._finish_failed_round(result, '入仓或清理')
 
     @node_from(from_name='失败局结算仓库')
-    @operation_node(name='判断整体重试次数', screenshot_before_round=False)
+    @operation_node(name='判断连续失败次数', screenshot_before_round=False)
     def decide_defeat_rounds(self) -> OperationRoundResult:
-        """结算后决定是否再开；额度在实际调用额外入场时才消耗。"""
-        if self.failure_retries_used >= self.config.max_failure_retries:
-            return self.round_fail(
-                f'整体重试已用 {self.failure_retries_used}/{self.config.max_failure_retries}，'
-                f'已完成仓库结算，停止自动重开；本局失败：{self.failure_reason}',
-            )
-        self.failure_retry_pending = True
-        return self.round_success('继续入场')
+        """结算后决定是否再开：全局或本局路线的连续失败达到上限就停止。"""
+        limit = self.config.max_consecutive_failures
+        route = self._round_route
+        if self.consecutive_failures >= limit:
+            subject = f'连续失败 {self.consecutive_failures} 局'
+        elif route is not None and self._round_route_failures() >= limit:
+            subject = f'路线「{route.name}」连续失败 {self._round_route_failures()} 局'
+        else:
+            self.failure_retry_pending = True
+            return self.round_success('继续入场')
+        return self.round_fail(
+            f'{subject}，达到上限 {limit}，已完成仓库结算，停止自动重开；'
+            f'最后一局失败：{self.failure_reason}',
+        )
